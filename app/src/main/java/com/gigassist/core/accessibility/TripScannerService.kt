@@ -50,7 +50,7 @@ class TripScannerService : AccessibilityService() {
 
     companion object {
         private const val UBER_PACKAGE = "com.ubercab.driver"
-        private const val DIDI_PACKAGE = "com.xiaoju.globalapp"
+        private const val DIDI_PACKAGE = "com.didiglobal.driver"
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
