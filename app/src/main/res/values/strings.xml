@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">GigAssist</string>
+    <string name="accessibility_service_description">GigAssist lee las ofertas de viaje de Uber y DiDi para mostrar métricas de rentabilidad. No realiza acciones automatizadas ni accede a información personal.</string>
 </resources>
