@@ -30,19 +30,20 @@ class UberTripOfferParser @Inject constructor() : TripOfferParser {
         val fare = fareRegex.find(fullText)?.groupValues?.get(1)
             ?.replace(",", ".")?.toDoubleOrNull()
 
-        // Distancia del viaje (la que tiene "Viaje:" delante)
-        val distRegex = Regex("""[Vv]iaje:.*?(\d+(?:[.,]\d)?)\s*km""", RegexOption.IGNORE_CASE)
+        // Distancia del viaje (la que tiene "Viaje" delante)
+        val distRegex = Regex("""[Vv]iaje[^\d]*?(\d+(?:[.,]\d)?)\s*km""", RegexOption.IGNORE_CASE)
         val dist = distRegex.find(fullText)?.groupValues?.get(1)
             ?.replace(",", ".")?.toDoubleOrNull()
 
         // Duración del viaje
-        val durRegex = Regex("""[Vv]iaje:\s*(\d+)\s*min""", RegexOption.IGNORE_CASE)
+        val durRegex = Regex("""[Vv]iaje[^\d]*?(\d+)\s*min""", RegexOption.IGNORE_CASE)
         val dur = durRegex.find(fullText)?.groupValues?.get(1)?.toIntOrNull()
 
         Log.d("GigParser", "fare=$fare | dist=$dist | dur=$dur")
 
         if (fare == null || dist == null || dur == null) {
             Timber.d("Uber parser: datos incompletos — fare=$fare, dist=$dist, dur=$dur")
+            Log.d("GigParser", "SKIP — faltan datos. fare=$fare, dist=$dist, dur=$dur")
             return null
         }
 
@@ -51,8 +52,8 @@ class UberTripOfferParser @Inject constructor() : TripOfferParser {
     }
 
     private fun isRealUberOffer(text: String): Boolean {
-        return text.contains("Viaje:", ignoreCase = true) &&
-               text.contains("Aceptar", ignoreCase = true) &&
+        return text.contains("viaje", ignoreCase = true) &&
+               text.contains("aceptar", ignoreCase = true) &&
                text.contains("km", ignoreCase = true)
     }
 
@@ -111,9 +112,15 @@ class DiDiTripOfferParser @Inject constructor() : TripOfferParser {
     }
 
     private fun isRealDiDiOffer(text: String): Boolean {
-        return Regex("""\$\d+""").containsMatchIn(text) &&
-               text.contains("km", ignoreCase = true) &&
-               text.contains("min", ignoreCase = true)
+        val hasPrice = Regex("""\$\s*\d+""").containsMatchIn(text)
+        val hasKm = text.contains("km", ignoreCase = true)
+        val hasMin = text.contains("min", ignoreCase = true)
+        
+        if (!hasPrice || !hasKm || !hasMin) {
+            Log.d("GigParser", "DiDi isRealOffer checks failed: price=$hasPrice, km=$hasKm, min=$hasMin")
+            return false
+        }
+        return true
     }
 
     companion object {
