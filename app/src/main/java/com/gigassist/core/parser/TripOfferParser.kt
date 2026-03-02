@@ -15,11 +15,11 @@ import com.gigassist.domain.model.TripOfferRawData
 interface TripOfferParser {
 
     /**
-     * Parsea el nodo raíz del árbol de accesibilidad y extrae
-     * los datos de la oferta de viaje.
+     * Parsea el texto extraído del árbol de accesibilidad y evalúa
+     * si corresponde a una oferta de viaje válida.
      *
-     * @param rootNode nodo raíz del árbol de accesibilidad activo.
+     * @param fullText Texto completo extraído de las ventanas activas.
      * @return TripOfferRawData si se detectó una oferta válida, null en caso contrario.
      */
-    fun parse(rootNode: AccessibilityNodeInfo): TripOfferRawData?
+    fun parse(fullText: String): TripOfferRawData?
 }

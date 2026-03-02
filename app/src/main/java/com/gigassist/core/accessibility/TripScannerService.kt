@@ -56,7 +56,6 @@ class TripScannerService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val evt = event ?: return
         val packageName = evt.packageName?.toString() ?: return
-        val source = evt.source ?: return
 
         val parser: TripOfferParser
         val platform: String
@@ -66,7 +65,17 @@ class TripScannerService : AccessibilityService() {
             else -> return
         }
 
-        val rawData = parser.parse(source) ?: return
+        val allWindows = windows
+        val texts = java.lang.StringBuilder()
+        for (window in allWindows) {
+            val root = window.root ?: continue
+            val windowTexts = com.gigassist.core.parser.extractLeafTexts(root)
+            texts.append(windowTexts.joinToString(" ")).append(" ")
+            root.recycle()
+        }
+        val fullText = texts.toString()
+        val rawData = parser.parse(fullText) ?: return
+
         Timber.d("Trip offer parsed from $platform: fare=${rawData.fare}, dist=${rawData.distanceKm}, dur=${rawData.durationMin}")
 
         serviceScope.launch {

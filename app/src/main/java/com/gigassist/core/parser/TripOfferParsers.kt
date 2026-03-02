@@ -16,12 +16,13 @@ import javax.inject.Inject
  */
 class UberTripOfferParser @Inject constructor() : TripOfferParser {
 
-    override fun parse(rootNode: AccessibilityNodeInfo): TripOfferRawData? {
-        val texts = extractLeafTexts(rootNode)
-        if (texts.isEmpty()) return null
-
-        val fullText = texts.joinToString(" ")
+    override fun parse(fullText: String): TripOfferRawData? {
         Log.d("GigParser", "=== TEXTO CRUDO === $fullText")
+
+        if (!isRealUberOffer(fullText)) {
+            Log.d("GigParser", "SKIP — no es oferta real")
+            return null
+        }
 
         // Tarifa principal — primer "DOP" seguido de número SIN el "+" delante
         val fareRegex = Regex("""(?<!\+)DOP\s*(\d+(?:[.,]\d{1,2})?)""")
@@ -48,6 +49,12 @@ class UberTripOfferParser @Inject constructor() : TripOfferParser {
         return TripOfferRawData(fare, dist, dur, PLATFORM_UBER)
     }
 
+    private fun isRealUberOffer(text: String): Boolean {
+        return text.contains("Aceptar", ignoreCase = true) &&
+               text.contains("Viaje:", ignoreCase = true) &&
+               text.contains("km", ignoreCase = true)
+    }
+
     companion object {
         const val PLATFORM_UBER = "Uber"
     }
@@ -69,12 +76,13 @@ class UberTripOfferParser @Inject constructor() : TripOfferParser {
  */
 class DiDiTripOfferParser @Inject constructor() : TripOfferParser {
 
-    override fun parse(rootNode: AccessibilityNodeInfo): TripOfferRawData? {
-        val texts = extractLeafTexts(rootNode)
-        if (texts.isEmpty()) return null
-
-        val fullText = texts.joinToString(" ")
+    override fun parse(fullText: String): TripOfferRawData? {
         Log.d("GigParser", "=== TEXTO CRUDO === $fullText")
+
+        if (!isRealDiDiOffer(fullText)) {
+            Log.d("GigParser", "SKIP — no es oferta real")
+            return null
+        }
 
         // Tarifa — "$" seguido de número con decimales
         val fareRegex = Regex("""\$\s*(\d+(?:[.,]\d{1,2})?)""")
@@ -108,6 +116,12 @@ class DiDiTripOfferParser @Inject constructor() : TripOfferParser {
 
         Timber.d("DiDi parser: oferta detectada — fare=$fare, dist=$dist km, dur=$dur min")
         return TripOfferRawData(fare, dist, dur, PLATFORM_DIDI)
+    }
+
+    private fun isRealDiDiOffer(text: String): Boolean {
+        return text.contains("Aceptar", ignoreCase = true) &&
+               text.contains("km", ignoreCase = true) &&
+               text.contains("min", ignoreCase = true)
     }
 
     companion object {
