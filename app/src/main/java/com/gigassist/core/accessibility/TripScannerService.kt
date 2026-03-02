@@ -69,7 +69,7 @@ class TripScannerService : AccessibilityService() {
         val texts = java.lang.StringBuilder()
         for (window in allWindows) {
             val root = window.root ?: continue
-            val windowTexts = com.gigassist.core.parser.extractLeafTexts(root)
+            val windowTexts = com.gigassist.core.parser.extractAllTexts(root)
             texts.append(windowTexts.joinToString(" ")).append(" ")
             root.recycle()
         }

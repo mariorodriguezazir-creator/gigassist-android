@@ -122,17 +122,20 @@ class DiDiTripOfferParser @Inject constructor() : TripOfferParser {
 }
 
 /**
- * Extrae todos los textos de nodos hoja del árbol de accesibilidad.
+ * Extrae todos los textos (text y contentDescription) del árbol de accesibilidad,
+ * visitando cada nodo (no solo las hojas) para evitar perder información
+ * en jerarquías complejas y reciclando los nodos para evitar fugas de memoria.
  */
-fun extractLeafTexts(node: AccessibilityNodeInfo): List<String> {
+fun extractAllTexts(node: AccessibilityNodeInfo): List<String> {
     val texts = mutableListOf<String>()
-    if (node.childCount == 0) {
-        node.text?.toString()?.let { texts.add(it) }
-    } else {
-        for (i in 0 until node.childCount) {
-            node.getChild(i)?.let { child ->
-                texts.addAll(extractLeafTexts(child))
-            }
+
+    node.text?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let { texts.add(it) }
+    node.contentDescription?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let { texts.add(it) }
+
+    for (i in 0 until node.childCount) {
+        node.getChild(i)?.let { child ->
+            texts.addAll(extractAllTexts(child))
+            child.recycle()
         }
     }
     return texts
