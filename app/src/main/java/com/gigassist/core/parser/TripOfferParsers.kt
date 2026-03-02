@@ -1,5 +1,6 @@
 package com.gigassist.core.parser
 
+import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import com.gigassist.domain.model.TripOfferRawData
 import timber.log.Timber
@@ -7,11 +8,11 @@ import javax.inject.Inject
 
 /**
  * Parser de ofertas de viaje para Uber Driver.
- * Extrae tarifa, distancia y duración de los textos del árbol
- * de accesibilidad usando regex.
- *
- * Los regex están basados en los formatos observados en la app
- * de Uber Driver en países hispanohablantes.
+ * Formato real capturado en RD:
+ *   Tarifa: "DOP108" o "DOP108.50"
+ *   Bonus:  "+DOP16.38 por inicio de viaje" (se ignora)
+ *   Pickup: "A 6 min (1.4 km)"
+ *   Viaje:  "Viaje: 10 min (2.7 km)"
  */
 class UberTripOfferParser @Inject constructor() : TripOfferParser {
 
@@ -19,44 +20,52 @@ class UberTripOfferParser @Inject constructor() : TripOfferParser {
         val texts = extractLeafTexts(rootNode)
         if (texts.isEmpty()) return null
 
-        val fare = extractFare(texts)
-        val distanceKm = extractDistance(texts)
-        val durationMin = extractDuration(texts)
+        val fullText = texts.joinToString(" ")
+        Log.d("GigParser", "=== TEXTO CRUDO === $fullText")
 
-        if (fare == null || distanceKm == null || durationMin == null) {
-            Timber.d("Uber parser: datos incompletos — fare=$fare, dist=$distanceKm, dur=$durationMin")
+        // Tarifa principal — primer "DOP" seguido de número SIN el "+" delante
+        val fareRegex = Regex("""(?<!\+)DOP\s*(\d+(?:[.,]\d{1,2})?)""")
+        val fare = fareRegex.find(fullText)?.groupValues?.get(1)
+            ?.replace(",", ".")?.toDoubleOrNull()
+
+        // Distancia del viaje (no del pickup)
+        val distRegex = Regex("""[Vv]iaje:\s*\d+\s*min\s*\((\d+(?:[.,]\d)?)\s*km\)""")
+        val dist = distRegex.find(fullText)?.groupValues?.get(1)
+            ?.replace(",", ".")?.toDoubleOrNull()
+
+        // Duración del viaje (no del pickup)
+        val durRegex = Regex("""[Vv]iaje:\s*(\d+)\s*min""")
+        val dur = durRegex.find(fullText)?.groupValues?.get(1)?.toIntOrNull()
+
+        Log.d("GigParser", "fare=$fare | dist=$dist | dur=$dur")
+
+        if (fare == null || dist == null || dur == null) {
+            Timber.d("Uber parser: datos incompletos — fare=$fare, dist=$dist, dur=$dur")
             return null
         }
 
-        Timber.d("Uber parser: oferta detectada — fare=$fare, dist=$distanceKm km, dur=$durationMin min")
-        return TripOfferRawData(fare, distanceKm, durationMin, PLATFORM_UBER)
+        Timber.d("Uber parser: oferta detectada — fare=$fare, dist=$dist km, dur=$dur min")
+        return TripOfferRawData(fare, dist, dur, PLATFORM_UBER)
     }
 
     companion object {
-        const val PLATFORM_UBER = "UBER"
-
-        // Tarifa: captura número después de símbolo de moneda
-        // Ejemplos: "RD$ 450", "$ 185.00", "COP 15000", "S/ 25.50"
-        val fareRegex = Regex("""(?:RD\$|COP|MXN|ARS|PEN|CLP|VES|BOB|PYG|UYU|EUR|USD|S/|Bs\.|₲|€|\$)\s?(\d+[\.,]?\d*)""")
-
-        // Distancia: captura número antes de km o mi
-        // Ejemplos: "12 km", "12.5 km", "7.8 mi"
-        val distanceRegex = Regex("""(\d+[\.,]?\d*)\s?(?:km|mi|millas)""", RegexOption.IGNORE_CASE)
-
-        // Duración: captura número antes de min, mins, minutos
-        // Ejemplos: "18 min", "45 minutos", "1 h 08"
-        val durationRegex = Regex("""(\d+)\s?(?:min|mins|minutos)""", RegexOption.IGNORE_CASE)
+        const val PLATFORM_UBER = "Uber"
     }
 }
 
 /**
  * Parser de ofertas de viaje para DiDi Driver.
- * Usa la misma lógica de extracción que Uber pero con
- * ajustes específicos si se detectan diferencias en los
- * formatos de texto de DiDi.
+ * Dos formatos reales capturados en RD:
  *
- * Nota: verificar en dispositivo real el formato exacto de
- * DiDi en cada país. Puede variar por región.
+ * Vista popup (oferta rápida):
+ *   Tarifa: "$352.75"
+ *   Pickup: "8min (1.2km)"
+ *   Viaje:  "37min (13.6km)"
+ *
+ * Vista lista (Centro de viajes):
+ *   Tarifa: "$352.75  ⚡x1.4"
+ *   Pickup: "(9 min 1.2 km)"
+ *   Viaje:  "(37 min 13.6 km)"
  */
 class DiDiTripOfferParser @Inject constructor() : TripOfferParser {
 
@@ -64,33 +73,50 @@ class DiDiTripOfferParser @Inject constructor() : TripOfferParser {
         val texts = extractLeafTexts(rootNode)
         if (texts.isEmpty()) return null
 
-        val fare = extractFare(texts)
-        val distanceKm = extractDistance(texts)
-        val durationMin = extractDuration(texts)
+        val fullText = texts.joinToString(" ")
+        Log.d("GigParser", "=== TEXTO CRUDO === $fullText")
 
-        if (fare == null || distanceKm == null || durationMin == null) {
-            Timber.d("DiDi parser: datos incompletos — fare=$fare, dist=$distanceKm, dur=$durationMin")
+        // Tarifa — "$" seguido de número con decimales
+        val fareRegex = Regex("""\$\s*(\d+(?:[.,]\d{1,2})?)""")
+        val fare = fareRegex.find(fullText)?.groupValues?.get(1)
+            ?.replace(",", ".")?.toDoubleOrNull()
+
+        // Distancia — tomar la SEGUNDA coincidencia de km (la del viaje, no del pickup)
+        val distRegex = Regex("""(\d+(?:[.,]\d)?)\s*km""")
+        val distMatches = distRegex.findAll(fullText).toList()
+        val dist = if (distMatches.size >= 2) {
+            distMatches[1].groupValues[1].replace(",", ".").toDoubleOrNull()
+        } else {
+            distMatches.firstOrNull()?.groupValues?.get(1)?.replace(",", ".")?.toDoubleOrNull()
+        }
+
+        // Duración — tomar la SEGUNDA coincidencia de min (la del viaje, no del pickup)
+        val durRegex = Regex("""(\d+)\s*min""")
+        val durMatches = durRegex.findAll(fullText).toList()
+        val dur = if (durMatches.size >= 2) {
+            durMatches[1].groupValues[1].toIntOrNull()
+        } else {
+            durMatches.firstOrNull()?.groupValues?.get(1)?.toIntOrNull()
+        }
+
+        Log.d("GigParser", "fare=$fare | dist=$dist | dur=$dur")
+
+        if (fare == null || dist == null || dur == null) {
+            Timber.d("DiDi parser: datos incompletos — fare=$fare, dist=$dist, dur=$dur")
             return null
         }
 
-        Timber.d("DiDi parser: oferta detectada — fare=$fare, dist=$distanceKm km, dur=$durationMin min")
-        return TripOfferRawData(fare, distanceKm, durationMin, PLATFORM_DIDI)
+        Timber.d("DiDi parser: oferta detectada — fare=$fare, dist=$dist km, dur=$dur min")
+        return TripOfferRawData(fare, dist, dur, PLATFORM_DIDI)
     }
 
     companion object {
-        const val PLATFORM_DIDI = "DIDI"
-
-        // DiDi usa formatos similares; ajustar si se detectan diferencias
-        val fareRegex = UberTripOfferParser.fareRegex
-        val distanceRegex = UberTripOfferParser.distanceRegex
-        val durationRegex = UberTripOfferParser.durationRegex
+        const val PLATFORM_DIDI = "DiDi"
     }
 }
 
 /**
  * Extrae todos los textos de nodos hoja del árbol de accesibilidad.
- * Recorre recursivamente el árbol y recolecta el texto de cada
- * nodo que no tiene hijos (nodo hoja).
  */
 fun extractLeafTexts(node: AccessibilityNodeInfo): List<String> {
     val texts = mutableListOf<String>()
@@ -104,44 +130,4 @@ fun extractLeafTexts(node: AccessibilityNodeInfo): List<String> {
         }
     }
     return texts
-}
-
-/**
- * Extrae la tarifa del primer texto que coincide con el patrón de moneda.
- * Reemplaza comas por puntos para manejar formatos numéricos locales.
- */
-fun extractFare(texts: List<String>): Double? {
-    for (text in texts) {
-        val match = UberTripOfferParser.fareRegex.find(text)
-        if (match != null) {
-            return match.groupValues[1].replace(",", ".").toDoubleOrNull()
-        }
-    }
-    return null
-}
-
-/**
- * Extrae la distancia del primer texto que coincide con el patrón km/mi.
- */
-fun extractDistance(texts: List<String>): Double? {
-    for (text in texts) {
-        val match = UberTripOfferParser.distanceRegex.find(text)
-        if (match != null) {
-            return match.groupValues[1].replace(",", ".").toDoubleOrNull()
-        }
-    }
-    return null
-}
-
-/**
- * Extrae la duración en minutos del primer texto que coincide con el patrón.
- */
-fun extractDuration(texts: List<String>): Int? {
-    for (text in texts) {
-        val match = UberTripOfferParser.durationRegex.find(text)
-        if (match != null) {
-            return match.groupValues[1].toIntOrNull()
-        }
-    }
-    return null
 }
