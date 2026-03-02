@@ -11,11 +11,15 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.gigassist.domain.usecase.GetDriverSettingsUseCase
 import com.gigassist.presentation.dashboard.DashboardScreen
+import com.gigassist.presentation.expenses.ExpensesScreen
 import com.gigassist.presentation.onboarding.OnboardingScreen
+import com.gigassist.presentation.settings.SettingsScreen
 
 object GigAssistRoutes {
     const val ONBOARDING = "onboarding"
     const val DASHBOARD = "dashboard"
+    const val SETTINGS = "settings"
+    const val EXPENSES = "expenses"
 }
 
 @Composable
@@ -25,7 +29,6 @@ fun GigAssistNavHost(
     val navController = rememberNavController()
     var startDestination by remember { mutableStateOf<String?>(null) }
 
-    // Decide destino inicial según si hay settings guardados
     LaunchedEffect(Unit) {
         val settings = getDriverSettings()
         startDestination = if (settings != null) {
@@ -35,7 +38,6 @@ fun GigAssistNavHost(
         }
     }
 
-    // Mostrar nada hasta que se determine el destino
     val destination = startDestination ?: return
 
     NavHost(
@@ -53,7 +55,26 @@ fun GigAssistNavHost(
         }
 
         composable(GigAssistRoutes.DASHBOARD) {
-            DashboardScreen()
+            DashboardScreen(
+                onNavigateToSettings = {
+                    navController.navigate(GigAssistRoutes.SETTINGS)
+                },
+                onNavigateToExpenses = {
+                    navController.navigate(GigAssistRoutes.EXPENSES)
+                }
+            )
+        }
+
+        composable(GigAssistRoutes.SETTINGS) {
+            SettingsScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(GigAssistRoutes.EXPENSES) {
+            ExpensesScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
         }
     }
 }

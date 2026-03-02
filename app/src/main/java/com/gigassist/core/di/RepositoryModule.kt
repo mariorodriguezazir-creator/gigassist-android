@@ -3,9 +3,11 @@ package com.gigassist.core.di
 import com.gigassist.data.repository.ExpenseRepositoryImpl
 import com.gigassist.data.repository.SettingsRepositoryImpl
 import com.gigassist.data.repository.ShiftRepositoryImpl
+import com.gigassist.data.repository.TripRepositoryImpl
 import com.gigassist.domain.repository.ExpenseRepository
 import com.gigassist.domain.repository.SettingsRepository
 import com.gigassist.domain.repository.ShiftRepository
+import com.gigassist.domain.repository.TripRepository
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -27,4 +29,8 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindShiftRepository(impl: ShiftRepositoryImpl): ShiftRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindTripRepository(impl: TripRepositoryImpl): TripRepository
 }

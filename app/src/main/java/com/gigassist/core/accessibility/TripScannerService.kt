@@ -2,10 +2,21 @@ package com.gigassist.core.accessibility
 
 import android.accessibilityservice.AccessibilityService
 import android.view.accessibility.AccessibilityEvent
+import com.gigassist.core.calculator.TripEvaluator
 import com.gigassist.core.parser.DiDiTripOfferParser
 import com.gigassist.core.parser.TripOfferParser
 import com.gigassist.core.parser.UberTripOfferParser
+import com.gigassist.domain.model.DistanceUnit
+import com.gigassist.domain.model.DriverSettings
+import com.gigassist.domain.model.EvaluationResult
+import com.gigassist.domain.model.TripEvaluationUiModel
+import com.gigassist.domain.model.TripEvaluatorInput
 import com.gigassist.domain.model.TripOfferRawData
+import com.gigassist.domain.model.TripRecord
+import com.gigassist.domain.repository.SettingsRepository
+import com.gigassist.domain.repository.ShiftRepository
+import com.gigassist.domain.repository.TripRepository
+import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -15,94 +26,111 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import javax.inject.Inject
 
 /**
- * Servicio de accesibilidad que detecta ofertas de viaje
- * en Uber Driver y DiDi Driver.
- *
- * RESTRICCIÓN CRÍTICA: Solo lectura del árbol de accesibilidad.
- * Cero acciones automatizadas. No modifica ni interactúa con
- * la UI de Uber/DiDi.
- *
- * Flujo:
- * 1. Detecta evento de cambio de ventana/contenido en Uber o DiDi.
- * 2. Obtiene el nodo raíz del árbol de accesibilidad.
- * 3. Delega el parsing al parser correspondiente (UberParser/DiDiParser).
- * 4. Emite TripOfferRawData a través de SharedFlow para que
- *    TripEvaluator lo procese y el overlay lo muestre.
+ * Servicio de accesibilidad que detecta ofertas de viaje de Uber y DiDi.
+ * Solo lee datos del árbol de accesibilidad, NO ejecuta acciones automatizadas.
  */
+@AndroidEntryPoint
 class TripScannerService : AccessibilityService() {
 
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    @Inject lateinit var tripEvaluator: TripEvaluator
+    @Inject lateinit var settingsRepository: SettingsRepository
+    @Inject lateinit var tripRepository: TripRepository
+    @Inject lateinit var shiftRepository: ShiftRepository
 
-    private val _tripOfferFlow = MutableSharedFlow<TripOfferRawData?>(
-        replay = 1,
-        extraBufferCapacity = 1
-    )
-    val tripOfferFlow: SharedFlow<TripOfferRawData?> = _tripOfferFlow.asSharedFlow()
+    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val uberParser: TripOfferParser = UberTripOfferParser()
-    private val diDiParser: TripOfferParser = DiDiTripOfferParser()
+    private val didiParser: TripOfferParser = DiDiTripOfferParser()
 
-    override fun onServiceConnected() {
-        super.onServiceConnected()
-        Timber.i("TripScannerService conectado — monitoreando Uber y DiDi")
+    private val _evaluationFlow = MutableSharedFlow<TripEvaluationUiModel>(replay = 1)
+    val evaluationFlow: SharedFlow<TripEvaluationUiModel> = _evaluationFlow.asSharedFlow()
+
+    companion object {
+        private const val UBER_PACKAGE = "com.ubercab.driver"
+        private const val DIDI_PACKAGE = "com.xiaoju.globalapp"
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null) return
+        val evt = event ?: return
+        val packageName = evt.packageName?.toString() ?: return
+        val source = evt.source ?: return
 
-        val packageName = event.packageName?.toString() ?: return
+        val parser: TripOfferParser
+        val platform: String
+        when (packageName) {
+            UBER_PACKAGE -> { parser = uberParser; platform = "Uber" }
+            DIDI_PACKAGE -> { parser = didiParser; platform = "DiDi" }
+            else -> return
+        }
 
-        // Solo procesar eventos de paquetes monitoreados
-        if (packageName != UBER_PACKAGE && packageName != DIDI_PACKAGE) return
-
-        // Solo procesar tipos de evento relevantes
-        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            event.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
-        ) return
-
-        val rootNode = rootInActiveWindow ?: return
-
-        val parser = getParserForPackage(packageName)
-        val rawData = parser.parse(rootNode)
+        val rawData = parser.parse(source) ?: return
+        Timber.d("Trip offer parsed from $platform: fare=${rawData.fare}, dist=${rawData.distanceKm}, dur=${rawData.durationMin}")
 
         serviceScope.launch {
-            _tripOfferFlow.emit(rawData)
+            processTrip(rawData, platform)
+        }
+    }
+
+    private suspend fun processTrip(rawData: TripOfferRawData, platform: String) {
+        try {
+            // 1. Get driver settings
+            val settings = settingsRepository.getSettings() ?: DriverSettings()
+
+            // 2. Evaluate trip
+            val input = TripEvaluatorInput(
+                fare = rawData.fare,
+                distanceKm = rawData.distanceKm,
+                durationMin = rawData.durationMin,
+                settings = settings,
+                airportConfig = settings.airportConfig
+            )
+            val rates = tripEvaluator.evaluate(input)
+
+            // 3. Get active shift
+            val activeShift = shiftRepository.getActiveShift()
+            val shiftId = activeShift?.id ?: 0L
+
+            // 4. Save trip record
+            val record = TripRecord(
+                shiftId = shiftId,
+                fare = rawData.fare,
+                distanceKm = rawData.distanceKm,
+                durationMin = rawData.durationMin,
+                platform = platform,
+                evaluationResult = rates.evaluationResult
+            )
+            tripRepository.saveTripRecord(record)
+            Timber.d("Trip saved: ${rates.evaluationResult} - ${rates.ratePerHour}/h")
+
+            // 5. Emit evaluation for overlay
+            val uiModel = TripEvaluationUiModel(
+                fare = rawData.fare,
+                ratePerHour = rates.ratePerHour,
+                ratePerDistanceUnit = rates.ratePerDistanceUnit,
+                estimatedNetFare = rates.estimatedNetFare,
+                evaluationResult = rates.evaluationResult,
+                platform = platform,
+                distanceKm = rawData.distanceKm,
+                durationMin = rawData.durationMin,
+                currencySymbol = settings.countryCode.currencySymbol,
+                distanceUnitLabel = if (settings.distanceUnit == DistanceUnit.KM) "km" else "mi"
+            )
+            _evaluationFlow.emit(uiModel)
+        } catch (e: Exception) {
+            Timber.e(e, "Error processing trip")
         }
     }
 
     override fun onInterrupt() {
-        Timber.w("TripScannerService interrumpido")
+        Timber.d("TripScannerService interrupted")
     }
 
     override fun onDestroy() {
         super.onDestroy()
         serviceScope.cancel()
-        Timber.i("TripScannerService destruido")
-    }
-
-    /**
-     * Devuelve el parser correspondiente según el paquete de la app detectada.
-     */
-    private fun getParserForPackage(packageName: String): TripOfferParser {
-        return when (packageName) {
-            UBER_PACKAGE -> uberParser
-            DIDI_PACKAGE -> diDiParser
-            else -> uberParser // Fallback, no debería ocurrir dado el filtro previo
-        }
-    }
-
-    companion object {
-        /** Paquete de Uber Driver */
-        const val UBER_PACKAGE = "com.ubercab.driver"
-
-        /**
-         * Paquete de DiDi Driver.
-         * Nota: verificar en dispositivo real el paquete exacto de DiDi
-         * en RD. Puede variar por región. Actualizar esta constante
-         * si es necesario.
-         */
-        const val DIDI_PACKAGE = "com.xiaoju.globalapp"
+        Timber.d("TripScannerService destroyed")
     }
 }
