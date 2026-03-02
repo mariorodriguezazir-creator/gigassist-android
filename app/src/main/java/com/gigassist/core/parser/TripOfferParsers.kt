@@ -8,11 +8,12 @@ import javax.inject.Inject
 
 /**
  * Parser de ofertas de viaje para Uber Driver.
- * Formato real capturado en RD:
- *   Tarifa: "DOP108" o "DOP108.50"
- *   Bonus:  "+DOP16.38 por inicio de viaje" (se ignora)
- *   Pickup: "A 6 min (1.4 km)"
- *   Viaje:  "Viaje: 10 min (2.7 km)"
+ * Formato real capturado en RD (Popup):
+ *   "DOP108"
+ *   "+DOP16.38 por inicio de viaje"
+ *   "A 6 min (1.4 km)"
+ *   "Viaje: 10 min (2.7 km)"
+ *   "Aceptar"
  */
 class UberTripOfferParser @Inject constructor() : TripOfferParser {
 
@@ -20,7 +21,7 @@ class UberTripOfferParser @Inject constructor() : TripOfferParser {
         Log.d("GigParser", "=== TEXTO CRUDO === $fullText")
 
         if (!isRealUberOffer(fullText)) {
-            Log.d("GigParser", "SKIP — no es oferta real")
+            Log.d("GigParser", "SKIP — no es oferta real Uber")
             return null
         }
 
@@ -29,13 +30,13 @@ class UberTripOfferParser @Inject constructor() : TripOfferParser {
         val fare = fareRegex.find(fullText)?.groupValues?.get(1)
             ?.replace(",", ".")?.toDoubleOrNull()
 
-        // Distancia del viaje (no del pickup)
-        val distRegex = Regex("""[Vv]iaje:\s*\d+\s*min\s*\((\d+(?:[.,]\d)?)\s*km\)""")
+        // Distancia del viaje (la que tiene "Viaje:" delante)
+        val distRegex = Regex("""[Vv]iaje:.*?(\d+(?:[.,]\d)?)\s*km""", RegexOption.IGNORE_CASE)
         val dist = distRegex.find(fullText)?.groupValues?.get(1)
             ?.replace(",", ".")?.toDoubleOrNull()
 
-        // Duración del viaje (no del pickup)
-        val durRegex = Regex("""[Vv]iaje:\s*(\d+)\s*min""")
+        // Duración del viaje
+        val durRegex = Regex("""[Vv]iaje:\s*(\d+)\s*min""", RegexOption.IGNORE_CASE)
         val dur = durRegex.find(fullText)?.groupValues?.get(1)?.toIntOrNull()
 
         Log.d("GigParser", "fare=$fare | dist=$dist | dur=$dur")
@@ -50,8 +51,8 @@ class UberTripOfferParser @Inject constructor() : TripOfferParser {
     }
 
     private fun isRealUberOffer(text: String): Boolean {
-        return text.contains("Aceptar", ignoreCase = true) &&
-               text.contains("Viaje:", ignoreCase = true) &&
+        return text.contains("Viaje:", ignoreCase = true) &&
+               text.contains("Aceptar", ignoreCase = true) &&
                text.contains("km", ignoreCase = true)
     }
 
@@ -62,17 +63,12 @@ class UberTripOfferParser @Inject constructor() : TripOfferParser {
 
 /**
  * Parser de ofertas de viaje para DiDi Driver.
- * Dos formatos reales capturados en RD:
- *
- * Vista popup (oferta rápida):
- *   Tarifa: "$352.75"
- *   Pickup: "8min (1.2km)"
- *   Viaje:  "37min (13.6km)"
- *
- * Vista lista (Centro de viajes):
- *   Tarifa: "$352.75  ⚡x1.4"
- *   Pickup: "(9 min 1.2 km)"
- *   Viaje:  "(37 min 13.6 km)"
+ * Formato real capturado en RD (Popup oscuro):
+ *   "$352.75"
+ *   "Dinámica x1.4  $39.56"
+ *   "4.96 • 189 viajes"
+ *   "8min (1.2km)"
+ *   "37min (13.6km)"
  */
 class DiDiTripOfferParser @Inject constructor() : TripOfferParser {
 
@@ -80,32 +76,28 @@ class DiDiTripOfferParser @Inject constructor() : TripOfferParser {
         Log.d("GigParser", "=== TEXTO CRUDO === $fullText")
 
         if (!isRealDiDiOffer(fullText)) {
-            Log.d("GigParser", "SKIP — no es oferta real")
+            Log.d("GigParser", "SKIP — no es oferta real DiDi")
             return null
         }
 
-        // Tarifa — "$" seguido de número con decimales
+        // Tarifa: primer "$" seguido de número
         val fareRegex = Regex("""\$\s*(\d+(?:[.,]\d{1,2})?)""")
         val fare = fareRegex.find(fullText)?.groupValues?.get(1)
             ?.replace(",", ".")?.toDoubleOrNull()
 
-        // Distancia — tomar la SEGUNDA coincidencia de km (la del viaje, no del pickup)
-        val distRegex = Regex("""(\d+(?:[.,]\d)?)\s*km""")
+        // Distancia: formato "Xmin (Y.Ykm)" sin espacios. Tomar la SEGUNDA ocurrencia.
+        val distRegex = Regex("""\d+min\s*\((\d+(?:[.,]\d+)?)\s*km\)""", RegexOption.IGNORE_CASE)
         val distMatches = distRegex.findAll(fullText).toList()
-        val dist = if (distMatches.size >= 2) {
-            distMatches[1].groupValues[1].replace(",", ".").toDoubleOrNull()
-        } else {
-            distMatches.firstOrNull()?.groupValues?.get(1)?.replace(",", ".")?.toDoubleOrNull()
-        }
+        val distStr = if (distMatches.size >= 2) distMatches[1].groupValues[1]
+                      else distMatches.firstOrNull()?.groupValues?.get(1)
+        val dist = distStr?.replace(",", ".")?.toDoubleOrNull()
 
-        // Duración — tomar la SEGUNDA coincidencia de min (la del viaje, no del pickup)
-        val durRegex = Regex("""(\d+)\s*min""")
+        // Duración: segunda ocurrencia de "Xmin"
+        val durRegex = Regex("""(\d+)min""", RegexOption.IGNORE_CASE)
         val durMatches = durRegex.findAll(fullText).toList()
-        val dur = if (durMatches.size >= 2) {
-            durMatches[1].groupValues[1].toIntOrNull()
-        } else {
-            durMatches.firstOrNull()?.groupValues?.get(1)?.toIntOrNull()
-        }
+        val durStr = if (durMatches.size >= 2) durMatches[1].groupValues[1]
+                     else durMatches.firstOrNull()?.groupValues?.get(1)
+        val dur = durStr?.toIntOrNull()
 
         Log.d("GigParser", "fare=$fare | dist=$dist | dur=$dur")
 
@@ -119,7 +111,7 @@ class DiDiTripOfferParser @Inject constructor() : TripOfferParser {
     }
 
     private fun isRealDiDiOffer(text: String): Boolean {
-        return text.contains("Aceptar", ignoreCase = true) &&
+        return Regex("""\$\d+""").containsMatchIn(text) &&
                text.contains("km", ignoreCase = true) &&
                text.contains("min", ignoreCase = true)
     }
