@@ -6,11 +6,11 @@ package com.gigassist.domain.model
  * Los umbrales definen cuándo un viaje es GOOD, FAIR o POOR.
  */
 data class DriverSettings(
-    val country: CountryCode = CountryCode.DO,
-    val currencyCode: String = country.currencyCode,
-    val distanceUnit: DistanceUnit = country.distanceUnit,
-    val minRatePerHour: Double = country.defaultMinRatePerHour,
-    val minRatePerDistanceUnit: Double = country.defaultMinRatePerKm,
+    val countryCode: CountryCode = CountryCode.DO,
+    val minRatePerHour: Double = countryCode.defaultMinRatePerHour,
+    val minRatePerDistanceUnit: Double = countryCode.defaultMinRatePerKm,
     val operatingCostPerHour: Double = 0.0,
+    val distanceUnit: DistanceUnit = countryCode.distanceUnit,
+    val airportConfig: AirportConfig? = null,
     val overlayAutoCloseSeconds: Int = 20
 )

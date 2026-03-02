@@ -24,7 +24,7 @@ class TripEvaluatorTest {
     // minRatePerHour = 600 DOP/h, minRatePerKm = 35 DOP/km
     // operatingCostPerHour = 250 DOP/h
     private val baseSettings = DriverSettings(
-        country = CountryCode.DO,
+        countryCode = CountryCode.DO,
         minRatePerHour = 600.0,
         minRatePerDistanceUnit = 35.0,
         operatingCostPerHour = 250.0,
