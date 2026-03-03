@@ -100,6 +100,7 @@ class ScreenCaptureService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val CAPTURE_INTERVAL_MS = 500L
         private const val DEBOUNCE_MS = 2000L
+        private const val TRIP_NOTIFICATION_ID = 1002
     }
 
     override fun onCreate() {
@@ -287,6 +288,22 @@ class ScreenCaptureService : Service() {
             tripRepository.saveTripRecord(record)
             Timber.d("$platform trip (OCR) saved: ${rates.evaluationResult} - ${rates.ratePerHour}/h")
 
+            // Mostrar notificación al usuario
+            val symbol = settings.countryCode.currencySymbol
+            val evalLabel = when (rates.evaluationResult) {
+                com.gigassist.domain.model.EvaluationResult.GOOD -> "✅ BUENO"
+                com.gigassist.domain.model.EvaluationResult.FAIR -> "⚠️ REGULAR"
+                com.gigassist.domain.model.EvaluationResult.POOR -> "❌ POBRE"
+            }
+            showTripNotification(
+                platform = platform,
+                fare = "$symbol${String.format("%.0f", rawData.fare)}",
+                distance = "${rawData.distanceKm} km",
+                duration = "${rawData.durationMin} min",
+                ratePerHour = "$symbol${String.format("%.0f", rates.ratePerHour)}/h",
+                evaluation = evalLabel
+            )
+
             val uiModel = TripEvaluationUiModel(
                 fare = rawData.fare,
                 ratePerHour = rates.ratePerHour,
@@ -303,6 +320,39 @@ class ScreenCaptureService : Service() {
         } catch (e: Exception) {
             Timber.e(e, "Error processing $platform trip from OCR")
         }
+    }
+
+    private fun showTripNotification(
+        platform: String,
+        fare: String,
+        distance: String,
+        duration: String,
+        ratePerHour: String,
+        evaluation: String
+    ) {
+        // Canal de alta prioridad para ofertas
+        val tripChannelId = "gig_trip_channel"
+        val tripChannel = NotificationChannel(
+            tripChannelId,
+            "Ofertas de viaje",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Notificaciones de ofertas de viaje detectadas"
+            enableVibration(true)
+        }
+        val mgr = getSystemService(NotificationManager::class.java)
+        mgr.createNotificationChannel(tripChannel)
+
+        val notification = NotificationCompat.Builder(this, tripChannelId)
+            .setContentTitle("$evaluation — $platform $fare")
+            .setContentText("$distance • $duration • $ratePerHour")
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setAutoCancel(true)
+            .build()
+
+        mgr.notify(TRIP_NOTIFICATION_ID, notification)
     }
 
     private fun createNotificationChannel() {
