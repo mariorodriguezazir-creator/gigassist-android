@@ -41,9 +41,9 @@
                 android:resource="@xml/accessibility_service_config"/>
         </service>
 
-        <!-- NotificationListenerService para DiDi Driver -->
+        <!-- NotificationListenerService para Uber + DiDi -->
         <service
-            android:name=".core.notification.DiDiNotificationListener"
+            android:name=".core.notification.TripNotificationListener"
             android:exported="true"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>

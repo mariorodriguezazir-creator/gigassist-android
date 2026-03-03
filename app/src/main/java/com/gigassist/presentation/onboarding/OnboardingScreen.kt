@@ -193,7 +193,7 @@ fun OnboardingScreen(
                     Text("🚗 Activar Accesibilidad (Uber)")
                 }
 
-                // DiDi — Notificaciones
+                // Uber + DiDi — Notificaciones (mecanismo principal)
                 OutlinedButton(
                     onClick = {
                         context.startActivity(
@@ -202,7 +202,7 @@ fun OnboardingScreen(
                     },
                     modifier = Modifier.fillMaxWidth().height(48.dp)
                 ) {
-                    Text("🔔 Activar Listener de Notificaciones (DiDi)")
+                    Text("🔔 Activar Notificaciones (Uber + DiDi)")
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
