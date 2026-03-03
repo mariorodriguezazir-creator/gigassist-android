@@ -3,11 +3,10 @@ package com.gigassist.core.accessibility
 import android.accessibilityservice.AccessibilityService
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityWindowInfo
+import android.view.accessibility.AccessibilityNodeInfo
 import com.gigassist.core.calculator.TripEvaluator
 import com.gigassist.core.parser.TripOfferParser
 import com.gigassist.core.parser.UberTripOfferParser
-import com.gigassist.core.parser.extractAllTexts
 import com.gigassist.domain.model.DistanceUnit
 import com.gigassist.domain.model.DriverSettings
 import com.gigassist.domain.model.TripEvaluationUiModel
@@ -32,15 +31,11 @@ import javax.inject.Inject
 /**
  * Servicio de accesibilidad dedicado a Uber Driver.
  *
- * Estrategia: Leer TODAS las ventanas visibles sin filtrar por packageName.
- * ¿Por qué? El popup de oferta de Uber puede aparecer como:
- * - Una ventana TYPE_APPLICATION con packageName "com.ubercab.driver"
- * - Una ventana overlay sin packageName
- * - Una ventana de sistema con packageName null
- *
- * El filtro por packageName se hace en el XML (solo recibimos eventos de Uber),
- * pero al leer ventanas necesitamos capturar TODAS las que tengan el popup.
- * El parser ya filtra por contenido (requiere "viaje", "aceptar", "km").
+ * Uber usa React Native que renderiza vía canvas — window.root
+ * NO contiene texto accesible. La solución es:
+ * 1. Usar event.source para obtener el nodo que cambió
+ * 2. Navegar al nodo raíz desde event.source
+ * 3. Extraer TODO el texto recursivamente desde ahí
  */
 @AndroidEntryPoint
 class TripScannerService : AccessibilityService() {
@@ -56,89 +51,133 @@ class TripScannerService : AccessibilityService() {
     private val _evaluationFlow = MutableSharedFlow<TripEvaluationUiModel>(replay = 1)
     val evaluationFlow: SharedFlow<TripEvaluationUiModel> = _evaluationFlow.asSharedFlow()
 
-    /** Debounce: último texto procesado para evitar spam */
+    /** Debounce */
     private var lastProcessedText: String = ""
     private var lastProcessedTime: Long = 0L
 
     companion object {
         private const val UBER_PACKAGE = "com.ubercab.driver"
         private const val DEBOUNCE_MS = 2000L
+        private const val TAG = "GigScanner"
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        Log.d("GigScanner", "✅ TripScannerService CONECTADO — listening for Uber events")
+        Log.d(TAG, "✅ TripScannerService CONECTADO — listening for Uber events")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val evt = event ?: return
         val eventPkg = evt.packageName?.toString() ?: "null"
+
+        // Doble check: solo Uber
+        if (eventPkg != UBER_PACKAGE) return
+
         val eventType = when (evt.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "STATE_CHANGED"
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> "CONTENT_CHANGED"
             else -> "TYPE_${evt.eventType}"
         }
 
-        // Log cada evento para diagnóstico
-        Log.d("GigScanner", "=== EVENTO de $eventPkg ($eventType) ===")
+        // === ESTRATEGIA 1: Usar event.source (el nodo que realmente cambió) ===
+        val source = evt.source
+        if (source != null) {
+            // Navegar al root del nodo source
+            val root = findRoot(source)
+            val texts = extractAllTextsDeep(root)
+            val textFromSource = texts.joinToString(" ").trim()
 
-        // Leer TODAS las ventanas — no filtrar por packageName
-        // porque el popup de Uber puede aparecer como ventana sin packageName
-        val allText = StringBuilder()
-        val windowCount = windows.size
-
-        for (window in windows) {
-            val root = window.root
-            if (root == null) {
-                Log.d("GigScanner", "  ventana sin root: tipo=${windowTypeName(window.type)}")
-                continue
-            }
-
-            val pkg = root.packageName?.toString() ?: "null"
-            val wType = windowTypeName(window.type)
-
-            // Solo leer ventanas de Uber o ventanas sin paquete (podrían ser popups)
-            if (pkg == UBER_PACKAGE || pkg == "null") {
-                Log.d("GigScanner", "  ✓ LEYENDO ventana: pkg=$pkg, tipo=$wType, layer=${window.layer}")
-                val windowTexts = extractAllTexts(root)
-                allText.append(windowTexts.joinToString(" ")).append(" ")
-            } else {
-                Log.d("GigScanner", "  ✗ SKIP ventana: pkg=$pkg, tipo=$wType")
+            if (textFromSource.isNotBlank()) {
+                Log.d(TAG, "=== EVENT_SOURCE ($eventType) texto=${textFromSource.take(200)}...")
+                processText(textFromSource)
             }
             root.recycle()
         }
 
-        val fullText = allText.toString().trim()
-
-        // Si no hay texto, loguear y salir
-        if (fullText.isBlank()) {
-            Log.d("GigScanner", "  → texto vacío después de $windowCount ventanas")
-            return
+        // === ESTRATEGIA 2: Leer texto directamente del evento ===
+        val eventText = evt.text?.joinToString(" ")?.trim() ?: ""
+        if (eventText.isNotBlank()) {
+            Log.d(TAG, "=== EVENT_TEXT ($eventType) texto=${eventText.take(200)}...")
+            processText(eventText)
         }
 
-        // Debounce — no procesar el mismo texto repetidamente
+        // === ESTRATEGIA 3: Leer ventanas de Uber (fallback) ===
+        for (window in windows) {
+            val wRoot = window.root ?: continue
+            val pkg = wRoot.packageName?.toString()
+            if (pkg != UBER_PACKAGE) {
+                wRoot.recycle()
+                continue
+            }
+            val windowTexts = extractAllTextsDeep(wRoot)
+            val windowText = windowTexts.joinToString(" ").trim()
+            wRoot.recycle()
+
+            if (windowText.isNotBlank()) {
+                Log.d(TAG, "=== WINDOW ($eventType) texto=${windowText.take(200)}...")
+                processText(windowText)
+            }
+        }
+    }
+
+    /**
+     * Navega hacia arriba hasta encontrar el nodo raíz.
+     */
+    private fun findRoot(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
+        var current = node
+        var parent = current.parent
+        while (parent != null) {
+            if (current != node) {
+                // No reciclar el nodo original, solo los intermedios
+                // Actually, no reciclar nada aquí, lo hacemos al final
+            }
+            current = parent
+            parent = current.parent
+        }
+        return current
+    }
+
+    /**
+     * Extrae TODOS los textos del árbol de accesibilidad de forma profunda.
+     * Lee: text, contentDescription, hintText, y el texto de los nodos hijos.
+     */
+    private fun extractAllTextsDeep(node: AccessibilityNodeInfo): List<String> {
+        val texts = mutableListOf<String>()
+
+        // Leer texto del nodo actual
+        node.text?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let { texts.add(it) }
+        node.contentDescription?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let { texts.add(it) }
+
+        // hintText (API 26+)
+        try {
+            node.hintText?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let { texts.add(it) }
+        } catch (_: Exception) { }
+
+        // Recorrer hijos
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            texts.addAll(extractAllTextsDeep(child))
+            child.recycle()
+        }
+        return texts
+    }
+
+    private fun processText(fullText: String) {
+        // Debounce
         val now = System.currentTimeMillis()
         if (fullText == lastProcessedText && (now - lastProcessedTime) < DEBOUNCE_MS) return
         lastProcessedText = fullText
         lastProcessedTime = now
 
-        // Parsear — el parser filtra por contenido ("viaje", "aceptar", "km")
+        // Parsear
         val rawData = uberParser.parse(fullText) ?: return
 
-        Log.d("GigScanner", "🎉 ¡OFERTA DETECTADA! fare=${rawData.fare}, dist=${rawData.distanceKm}, dur=${rawData.durationMin}")
+        Log.d(TAG, "🎉 ¡OFERTA DETECTADA! fare=${rawData.fare}, dist=${rawData.distanceKm}, dur=${rawData.durationMin}")
         Timber.d("Uber offer parsed: fare=${rawData.fare}, dist=${rawData.distanceKm}, dur=${rawData.durationMin}")
 
         serviceScope.launch {
             processTrip(rawData)
         }
-    }
-
-    private fun windowTypeName(type: Int): String = when (type) {
-        AccessibilityWindowInfo.TYPE_APPLICATION -> "APP"
-        AccessibilityWindowInfo.TYPE_SYSTEM -> "SYSTEM"
-        AccessibilityWindowInfo.TYPE_INPUT_METHOD -> "INPUT"
-        AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY -> "OVERLAY"
-        else -> "TYPE_$type"
     }
 
     private suspend fun processTrip(rawData: TripOfferRawData) {

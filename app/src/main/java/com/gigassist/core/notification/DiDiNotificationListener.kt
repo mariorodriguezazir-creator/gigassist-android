@@ -1,6 +1,7 @@
 package com.gigassist.core.notification
 
 import android.app.Notification
+import android.content.Context
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -15,7 +16,10 @@ import com.gigassist.domain.model.TripRecord
 import com.gigassist.domain.repository.SettingsRepository
 import com.gigassist.domain.repository.ShiftRepository
 import com.gigassist.domain.repository.TripRepository
-import dagger.hilt.android.AndroidEntryPoint
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,23 +29,30 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import timber.log.Timber
-import javax.inject.Inject
 
 /**
  * NotificationListenerService para capturar ofertas de DiDi.
  *
- * DiDi bloquea el árbol de accesibilidad en su popup de viaje
- * en la versión latinoamericana. La solución confirmada es leer
- * la NOTIFICACIÓN del sistema que DiDi emite ANTES de mostrar
- * el popup, la cual SÍ contiene el texto del viaje.
+ * NO usa @AndroidEntryPoint porque NotificationListenerService
+ * es instanciado directamente por el sistema y Hilt no soporta
+ * inyección automática en este tipo de servicio.
+ * Usamos EntryPointAccessors para inyección manual.
  */
-@AndroidEntryPoint
 class DiDiNotificationListener : NotificationListenerService() {
 
-    @Inject lateinit var tripEvaluator: TripEvaluator
-    @Inject lateinit var settingsRepository: SettingsRepository
-    @Inject lateinit var tripRepository: TripRepository
-    @Inject lateinit var shiftRepository: ShiftRepository
+    @EntryPoint
+    @InstallIn(SingletonComponent::class)
+    interface DiDiListenerEntryPoint {
+        fun tripEvaluator(): TripEvaluator
+        fun settingsRepository(): SettingsRepository
+        fun tripRepository(): TripRepository
+        fun shiftRepository(): ShiftRepository
+    }
+
+    private lateinit var tripEvaluator: TripEvaluator
+    private lateinit var settingsRepository: SettingsRepository
+    private lateinit var tripRepository: TripRepository
+    private lateinit var shiftRepository: ShiftRepository
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val didiParser = DiDiTripOfferParser()
@@ -51,33 +62,51 @@ class DiDiNotificationListener : NotificationListenerService() {
 
     companion object {
         private const val DIDI_PACKAGE = "com.didiglobal.driver"
+        private const val TAG = "DiDiNotif"
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        Log.d(TAG, "onCreate — inicializando inyección manual de Hilt")
+        try {
+            val entryPoint = EntryPointAccessors.fromApplication(
+                applicationContext,
+                DiDiListenerEntryPoint::class.java
+            )
+            tripEvaluator = entryPoint.tripEvaluator()
+            settingsRepository = entryPoint.settingsRepository()
+            tripRepository = entryPoint.tripRepository()
+            shiftRepository = entryPoint.shiftRepository()
+            Log.d(TAG, "✅ Dependencias inyectadas correctamente")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error inyectando dependencias", e)
+        }
     }
 
     override fun onListenerConnected() {
         super.onListenerConnected()
-        Log.d("DiDiNotif", "✅ NotificationListener CONECTADO — escuchando notificaciones")
-        // Log todas las notificaciones actuales para confirmar que funciona
+        Log.d(TAG, "✅ NotificationListener CONECTADO — escuchando notificaciones")
         try {
             val active = activeNotifications
-            Log.d("DiDiNotif", "Notificaciones activas: ${active?.size ?: 0}")
-            active?.forEach { sbn ->
-                Log.d("DiDiNotif", "  → ${sbn.packageName}: ${sbn.notification.extras?.getString(Notification.EXTRA_TITLE)}")
+            Log.d(TAG, "Notificaciones activas: ${active?.size ?: 0}")
+            active?.take(5)?.forEach { sbn ->
+                Log.d(TAG, "  → ${sbn.packageName}: ${sbn.notification.extras?.getString(Notification.EXTRA_TITLE)}")
             }
         } catch (e: Exception) {
-            Log.e("DiDiNotif", "Error leyendo notificaciones activas", e)
+            Log.e(TAG, "Error leyendo notificaciones activas", e)
         }
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
-        Log.d("DiDiNotif", "❌ NotificationListener DESCONECTADO")
+        Log.d(TAG, "❌ NotificationListener DESCONECTADO")
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val notification = sbn ?: return
 
-        // Log TODAS las notificaciones para debug (solo el packageName)
-        Log.d("DiDiNotif", "Notif recibida: pkg=${notification.packageName}")
+        // Log TODAS las notificaciones para debug
+        Log.d(TAG, "Notif recibida: pkg=${notification.packageName}")
 
         if (notification.packageName != DIDI_PACKAGE) return
 
@@ -92,25 +121,24 @@ class DiDiNotificationListener : NotificationListenerService() {
             .filter { it.isNotBlank() }
             .joinToString(" ")
 
-        Log.d("DiDiNotif", "=== DiDi NOTIF ===")
-        Log.d("DiDiNotif", "  title:   $title")
-        Log.d("DiDiNotif", "  text:    $text")
-        Log.d("DiDiNotif", "  bigText: $bigText")
-        Log.d("DiDiNotif", "  subText: $subText")
-        Log.d("DiDiNotif", "  FULL:    $full")
+        Log.d(TAG, "=== DiDi NOTIF ===")
+        Log.d(TAG, "  title:   $title")
+        Log.d(TAG, "  text:    $text")
+        Log.d(TAG, "  bigText: $bigText")
+        Log.d(TAG, "  FULL:    $full")
 
         if (full.isBlank()) return
 
         val offer = didiParser.parse(full)
         if (offer != null) {
-            Log.d("DiDiNotif", "✅ DiDi OFERTA: fare=${offer.fare}, dist=${offer.distanceKm}, dur=${offer.durationMin}")
+            Log.d(TAG, "✅ DiDi OFERTA: fare=${offer.fare}, dist=${offer.distanceKm}, dur=${offer.durationMin}")
             Timber.d("DiDi offer from notification: fare=${offer.fare}, dist=${offer.distanceKm}, dur=${offer.durationMin}")
 
             serviceScope.launch {
                 processTrip(offer)
             }
         } else {
-            Log.d("DiDiNotif", "ℹ️ Parser no encontró oferta en esta notificación")
+            Log.d(TAG, "ℹ️ Parser no encontró oferta en esta notificación")
         }
     }
 
