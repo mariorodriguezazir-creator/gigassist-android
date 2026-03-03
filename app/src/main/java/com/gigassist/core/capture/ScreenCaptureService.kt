@@ -145,6 +145,19 @@ class ScreenCaptureService : Service() {
         val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = mgr.getMediaProjection(resultCode, data)
 
+        // Android 14+ REQUIERE registrar callback ANTES de createVirtualDisplay
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() {
+                    Log.d(TAG, "MediaProjection detenida por el sistema")
+                    isCapturing = false
+                    handler.removeCallbacksAndMessages(null)
+                    virtualDisplay?.release()
+                    imageReader?.close()
+                }
+            }, handler)
+        }
+
         val metrics = resources.displayMetrics
         imageReader = ImageReader.newInstance(
             metrics.widthPixels,
