@@ -1,5 +1,11 @@
 package com.gigassist.presentation.dashboard
 
+import android.app.Activity
+import android.content.Intent
+import android.media.projection.MediaProjectionManager
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,14 +41,19 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.gigassist.core.capture.ScreenCaptureService
 import com.gigassist.domain.model.EvaluationResult
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,6 +65,22 @@ fun DashboardScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
+    var captureActive by remember { mutableStateOf(false) }
+
+    // Launcher para MediaProjection
+    val projectionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val svc = Intent(context, ScreenCaptureService::class.java).apply {
+                putExtra("proj_data", result.data)
+                putExtra("proj_code", result.resultCode)
+            }
+            ContextCompat.startForegroundService(context, svc)
+            captureActive = true
+        }
+    }
 
     LaunchedEffect(state.error) {
         state.error?.let {
@@ -105,6 +132,26 @@ fun DashboardScreen(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                // ── Captura de Pantalla ──
+                CaptureCard(
+                    captureActive = captureActive,
+                    onStartCapture = {
+                        val mgr = context.getSystemService(
+                            Activity.MEDIA_PROJECTION_SERVICE
+                        ) as MediaProjectionManager
+                        projectionLauncher.launch(mgr.createScreenCaptureIntent())
+                    },
+                    onStopCapture = {
+                        context.stopService(Intent(context, ScreenCaptureService::class.java))
+                        captureActive = false
+                    },
+                    onOpenNotificationSettings = {
+                        context.startActivity(
+                            Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+                        )
+                    }
+                )
+
                 // ── Shift Card ──
                 ShiftCard(
                     state = state,
@@ -116,6 +163,71 @@ fun DashboardScreen(
                 state.lastTripEvaluation?.let { trip ->
                     LastTripCard(trip = trip)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CaptureCard(
+    captureActive: Boolean,
+    onStartCapture: () -> Unit,
+    onStopCapture: () -> Unit,
+    onOpenNotificationSettings: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (captureActive)
+                MaterialTheme.colorScheme.primaryContainer
+            else
+                MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Text(
+                text = if (captureActive) "📸 Monitoreo activo" else "📸 Monitoreo de ofertas",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = if (captureActive)
+                    "Capturando pantalla — ofertas de Uber y DiDi se detectarán automáticamente"
+                else
+                    "Activa la captura de pantalla para detectar ofertas de viaje",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (!captureActive) {
+                Button(
+                    onClick = onStartCapture,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Text("📸 Iniciar captura de pantalla")
+                }
+            } else {
+                OutlinedButton(
+                    onClick = onStopCapture,
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                ) {
+                    Text("⏹ Detener captura")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedButton(
+                onClick = onOpenNotificationSettings,
+                modifier = Modifier.fillMaxWidth().height(40.dp)
+            ) {
+                Text("🔔 Notificaciones (complemento)", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
