@@ -1,5 +1,7 @@
 package com.gigassist.presentation.onboarding
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +22,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -35,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -50,6 +54,7 @@ fun OnboardingScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
 
     LaunchedEffect(state.isSaved) {
         if (state.isSaved) {
@@ -161,6 +166,46 @@ fun OnboardingScreen(
                         style = MaterialTheme.typography.titleMedium
                     )
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // --- Permisos de servicios ---
+                Text(
+                    text = "Permisos necesarios",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Activa los siguientes permisos para que GigAssist detecte ofertas de viaje.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // Uber — Accesibilidad
+                OutlinedButton(
+                    onClick = {
+                        context.startActivity(
+                            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                ) {
+                    Text("🚗 Activar Accesibilidad (Uber)")
+                }
+
+                // DiDi — Notificaciones
+                OutlinedButton(
+                    onClick = {
+                        context.startActivity(
+                            Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                ) {
+                    Text("🔔 Activar Listener de Notificaciones (DiDi)")
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
             }
         }
     }

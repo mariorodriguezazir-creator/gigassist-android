@@ -1,11 +1,11 @@
-package com.gigassist.core.accessibility
+package com.gigassist.core.notification
 
-import android.accessibilityservice.AccessibilityService
-import android.view.accessibility.AccessibilityEvent
+import android.app.Notification
+import android.service.notification.NotificationListenerService
+import android.service.notification.StatusBarNotification
+import android.util.Log
 import com.gigassist.core.calculator.TripEvaluator
-import com.gigassist.core.parser.TripOfferParser
-import com.gigassist.core.parser.UberTripOfferParser
-import com.gigassist.core.parser.extractAllTexts
+import com.gigassist.core.parser.DiDiTripOfferParser
 import com.gigassist.domain.model.DistanceUnit
 import com.gigassist.domain.model.DriverSettings
 import com.gigassist.domain.model.TripEvaluationUiModel
@@ -28,16 +28,15 @@ import timber.log.Timber
 import javax.inject.Inject
 
 /**
- * Servicio de accesibilidad dedicado EXCLUSIVAMENTE a Uber Driver.
+ * NotificationListenerService para capturar ofertas de DiDi.
  *
- * Con packageNames="com.ubercab.driver" en el XML de configuración,
- * el sistema operativo garantiza que onAccessibilityEvent NUNCA recibe
- * eventos de otras apps (WhatsApp, DiDi, panel de MIUI, etc.).
- *
- * DiDi se maneja por separado vía DiDiNotificationListener.
+ * DiDi bloquea el árbol de accesibilidad en su popup de viaje
+ * en la versión latinoamericana. La solución confirmada es leer
+ * la NOTIFICACIÓN del sistema que DiDi emite ANTES de mostrar
+ * el popup, la cual SÍ contiene el texto del viaje.
  */
 @AndroidEntryPoint
-class TripScannerService : AccessibilityService() {
+class DiDiNotificationListener : NotificationListenerService() {
 
     @Inject lateinit var tripEvaluator: TripEvaluator
     @Inject lateinit var settingsRepository: SettingsRepository
@@ -45,33 +44,39 @@ class TripScannerService : AccessibilityService() {
     @Inject lateinit var shiftRepository: ShiftRepository
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val uberParser: TripOfferParser = UberTripOfferParser()
+    private val didiParser = DiDiTripOfferParser()
 
     private val _evaluationFlow = MutableSharedFlow<TripEvaluationUiModel>(replay = 1)
     val evaluationFlow: SharedFlow<TripEvaluationUiModel> = _evaluationFlow.asSharedFlow()
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        val evt = event ?: return
-        val packageName = evt.packageName?.toString() ?: return
+    companion object {
+        private const val DIDI_PACKAGE = "com.didiglobal.driver"
+    }
 
-        // Solo Uber — el XML de configuración ya filtra, pero doble-check
-        if (packageName != UBER_PACKAGE) return
+    override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        val notification = sbn ?: return
+        if (notification.packageName != DIDI_PACKAGE) return
 
-        val allWindows = windows
-        val texts = StringBuilder()
-        for (window in allWindows) {
-            val root = window.root ?: continue
-            val windowTexts = extractAllTexts(root)
-            texts.append(windowTexts.joinToString(" ")).append(" ")
-            root.recycle()
-        }
-        val fullText = texts.toString()
-        val rawData = uberParser.parse(fullText) ?: return
+        val extras = notification.notification.extras ?: return
+        val title   = extras.getString(Notification.EXTRA_TITLE) ?: ""
+        val text    = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
+        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString() ?: ""
 
-        Timber.d("Uber offer parsed: fare=${rawData.fare}, dist=${rawData.distanceKm}, dur=${rawData.durationMin}")
+        val full = listOf(title, text, bigText)
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+
+        Log.d("DiDiNotif", "RAW notif: $full")
+
+        if (full.isBlank()) return
+
+        val offer = didiParser.parse(full) ?: return
+
+        Log.d("GigParser", "✅ DiDi OFERTA: fare=${offer.fare}, dist=${offer.distanceKm}, dur=${offer.durationMin}")
+        Timber.d("DiDi offer from notification: fare=${offer.fare}, dist=${offer.distanceKm}, dur=${offer.durationMin}")
 
         serviceScope.launch {
-            processTrip(rawData)
+            processTrip(offer)
         }
     }
 
@@ -96,11 +101,11 @@ class TripScannerService : AccessibilityService() {
                 fare = rawData.fare,
                 distanceKm = rawData.distanceKm,
                 durationMin = rawData.durationMin,
-                platform = "Uber",
+                platform = "DiDi",
                 evaluationResult = rates.evaluationResult
             )
             tripRepository.saveTripRecord(record)
-            Timber.d("Uber trip saved: ${rates.evaluationResult} - ${rates.ratePerHour}/h")
+            Timber.d("DiDi trip saved: ${rates.evaluationResult} - ${rates.ratePerHour}/h")
 
             val uiModel = TripEvaluationUiModel(
                 fare = rawData.fare,
@@ -108,7 +113,7 @@ class TripScannerService : AccessibilityService() {
                 ratePerDistanceUnit = rates.ratePerDistanceUnit,
                 estimatedNetFare = rates.estimatedNetFare,
                 evaluationResult = rates.evaluationResult,
-                platform = "Uber",
+                platform = "DiDi",
                 distanceKm = rawData.distanceKm,
                 durationMin = rawData.durationMin,
                 currencySymbol = settings.countryCode.currencySymbol,
@@ -116,21 +121,17 @@ class TripScannerService : AccessibilityService() {
             )
             _evaluationFlow.emit(uiModel)
         } catch (e: Exception) {
-            Timber.e(e, "Error processing Uber trip")
+            Timber.e(e, "Error processing DiDi trip from notification")
         }
     }
 
-    override fun onInterrupt() {
-        Timber.d("TripScannerService interrupted")
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
+        // No action needed
     }
 
     override fun onDestroy() {
         super.onDestroy()
         serviceScope.cancel()
-        Timber.d("TripScannerService destroyed")
-    }
-
-    companion object {
-        private const val UBER_PACKAGE = "com.ubercab.driver"
+        Timber.d("DiDiNotificationListener destroyed")
     }
 }
