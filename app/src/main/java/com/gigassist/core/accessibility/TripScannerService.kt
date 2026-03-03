@@ -1,7 +1,9 @@
 package com.gigassist.core.accessibility
 
 import android.accessibilityservice.AccessibilityService
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityWindowInfo
 import com.gigassist.core.calculator.TripEvaluator
 import com.gigassist.core.parser.TripOfferParser
 import com.gigassist.core.parser.UberTripOfferParser
@@ -30,11 +32,10 @@ import javax.inject.Inject
 /**
  * Servicio de accesibilidad dedicado EXCLUSIVAMENTE a Uber Driver.
  *
- * Con packageNames="com.ubercab.driver" en el XML de configuración,
- * el sistema operativo garantiza que onAccessibilityEvent NUNCA recibe
- * eventos de otras apps (WhatsApp, DiDi, panel de MIUI, etc.).
- *
- * DiDi se maneja por separado vía DiDiNotificationListener.
+ * IMPORTANTE: El flag packageNames en el XML solo controla qué eventos
+ * DISPARAN onAccessibilityEvent. Pero la propiedad `windows` devuelve
+ * TODAS las ventanas visibles (notificaciones, barra de estado, MIUI, etc).
+ * Por eso DEBEMOS filtrar ventanas por packageName del nodo raíz.
  */
 @AndroidEntryPoint
 class TripScannerService : AccessibilityService() {
@@ -50,22 +51,56 @@ class TripScannerService : AccessibilityService() {
     private val _evaluationFlow = MutableSharedFlow<TripEvaluationUiModel>(replay = 1)
     val evaluationFlow: SharedFlow<TripEvaluationUiModel> = _evaluationFlow.asSharedFlow()
 
+    /** Debounce: último texto procesado para evitar spam */
+    private var lastProcessedText: String = ""
+    private var lastProcessedTime: Long = 0L
+
+    companion object {
+        private const val UBER_PACKAGE = "com.ubercab.driver"
+        private const val DEBOUNCE_MS = 1000L
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val evt = event ?: return
-        val packageName = evt.packageName?.toString() ?: return
 
-        // Solo Uber — el XML de configuración ya filtra, pero doble-check
-        if (packageName != UBER_PACKAGE) return
-
-        val allWindows = windows
-        val texts = StringBuilder()
-        for (window in allWindows) {
+        // 1. SOLO extraer texto de ventanas que pertenecen a Uber
+        val uberText = StringBuilder()
+        for (window in windows) {
             val root = window.root ?: continue
+            val pkg = root.packageName?.toString()
+
+            if (pkg != UBER_PACKAGE) {
+                root.recycle()
+                continue
+            }
+
+            // Log del tipo de ventana para debug
+            val windowType = when (window.type) {
+                AccessibilityWindowInfo.TYPE_APPLICATION -> "APP"
+                AccessibilityWindowInfo.TYPE_SYSTEM -> "SYSTEM"
+                AccessibilityWindowInfo.TYPE_INPUT_METHOD -> "INPUT"
+                AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY -> "OVERLAY"
+                else -> "TYPE_${window.type}"
+            }
+            Log.d("GigScanner", "Ventana Uber encontrada: tipo=$windowType, layer=${window.layer}")
+
             val windowTexts = extractAllTexts(root)
-            texts.append(windowTexts.joinToString(" ")).append(" ")
+            uberText.append(windowTexts.joinToString(" ")).append(" ")
             root.recycle()
         }
-        val fullText = texts.toString()
+
+        val fullText = uberText.toString().trim()
+
+        // 2. Ignorar si no hay texto de Uber
+        if (fullText.isBlank()) return
+
+        // 3. Debounce — no procesar el mismo texto repetidamente
+        val now = System.currentTimeMillis()
+        if (fullText == lastProcessedText && (now - lastProcessedTime) < DEBOUNCE_MS) return
+        lastProcessedText = fullText
+        lastProcessedTime = now
+
+        // 4. Parsear
         val rawData = uberParser.parse(fullText) ?: return
 
         Timber.d("Uber offer parsed: fare=${rawData.fare}, dist=${rawData.distanceKm}, dur=${rawData.durationMin}")
@@ -128,9 +163,5 @@ class TripScannerService : AccessibilityService() {
         super.onDestroy()
         serviceScope.cancel()
         Timber.d("TripScannerService destroyed")
-    }
-
-    companion object {
-        private const val UBER_PACKAGE = "com.ubercab.driver"
     }
 }
