@@ -30,12 +30,17 @@ import timber.log.Timber
 import javax.inject.Inject
 
 /**
- * Servicio de accesibilidad dedicado EXCLUSIVAMENTE a Uber Driver.
+ * Servicio de accesibilidad dedicado a Uber Driver.
  *
- * IMPORTANTE: El flag packageNames en el XML solo controla qué eventos
- * DISPARAN onAccessibilityEvent. Pero la propiedad `windows` devuelve
- * TODAS las ventanas visibles (notificaciones, barra de estado, MIUI, etc).
- * Por eso DEBEMOS filtrar ventanas por packageName del nodo raíz.
+ * Estrategia: Leer TODAS las ventanas visibles sin filtrar por packageName.
+ * ¿Por qué? El popup de oferta de Uber puede aparecer como:
+ * - Una ventana TYPE_APPLICATION con packageName "com.ubercab.driver"
+ * - Una ventana overlay sin packageName
+ * - Una ventana de sistema con packageName null
+ *
+ * El filtro por packageName se hace en el XML (solo recibimos eventos de Uber),
+ * pero al leer ventanas necesitamos capturar TODAS las que tengan el popup.
+ * El parser ya filtra por contenido (requiere "viaje", "aceptar", "km").
  */
 @AndroidEntryPoint
 class TripScannerService : AccessibilityService() {
@@ -57,57 +62,83 @@ class TripScannerService : AccessibilityService() {
 
     companion object {
         private const val UBER_PACKAGE = "com.ubercab.driver"
-        private const val DEBOUNCE_MS = 1000L
+        private const val DEBOUNCE_MS = 2000L
+    }
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        Log.d("GigScanner", "✅ TripScannerService CONECTADO — listening for Uber events")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val evt = event ?: return
+        val eventPkg = evt.packageName?.toString() ?: "null"
+        val eventType = when (evt.eventType) {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "STATE_CHANGED"
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> "CONTENT_CHANGED"
+            else -> "TYPE_${evt.eventType}"
+        }
 
-        // 1. SOLO extraer texto de ventanas que pertenecen a Uber
-        val uberText = StringBuilder()
+        // Log cada evento para diagnóstico
+        Log.d("GigScanner", "=== EVENTO de $eventPkg ($eventType) ===")
+
+        // Leer TODAS las ventanas — no filtrar por packageName
+        // porque el popup de Uber puede aparecer como ventana sin packageName
+        val allText = StringBuilder()
+        val windowCount = windows.size
+
         for (window in windows) {
-            val root = window.root ?: continue
-            val pkg = root.packageName?.toString()
-
-            if (pkg != UBER_PACKAGE) {
-                root.recycle()
+            val root = window.root
+            if (root == null) {
+                Log.d("GigScanner", "  ventana sin root: tipo=${windowTypeName(window.type)}")
                 continue
             }
 
-            // Log del tipo de ventana para debug
-            val windowType = when (window.type) {
-                AccessibilityWindowInfo.TYPE_APPLICATION -> "APP"
-                AccessibilityWindowInfo.TYPE_SYSTEM -> "SYSTEM"
-                AccessibilityWindowInfo.TYPE_INPUT_METHOD -> "INPUT"
-                AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY -> "OVERLAY"
-                else -> "TYPE_${window.type}"
-            }
-            Log.d("GigScanner", "Ventana Uber encontrada: tipo=$windowType, layer=${window.layer}")
+            val pkg = root.packageName?.toString() ?: "null"
+            val wType = windowTypeName(window.type)
 
-            val windowTexts = extractAllTexts(root)
-            uberText.append(windowTexts.joinToString(" ")).append(" ")
+            // Solo leer ventanas de Uber o ventanas sin paquete (podrían ser popups)
+            if (pkg == UBER_PACKAGE || pkg == "null") {
+                Log.d("GigScanner", "  ✓ LEYENDO ventana: pkg=$pkg, tipo=$wType, layer=${window.layer}")
+                val windowTexts = extractAllTexts(root)
+                allText.append(windowTexts.joinToString(" ")).append(" ")
+            } else {
+                Log.d("GigScanner", "  ✗ SKIP ventana: pkg=$pkg, tipo=$wType")
+            }
             root.recycle()
         }
 
-        val fullText = uberText.toString().trim()
+        val fullText = allText.toString().trim()
 
-        // 2. Ignorar si no hay texto de Uber
-        if (fullText.isBlank()) return
+        // Si no hay texto, loguear y salir
+        if (fullText.isBlank()) {
+            Log.d("GigScanner", "  → texto vacío después de $windowCount ventanas")
+            return
+        }
 
-        // 3. Debounce — no procesar el mismo texto repetidamente
+        // Debounce — no procesar el mismo texto repetidamente
         val now = System.currentTimeMillis()
         if (fullText == lastProcessedText && (now - lastProcessedTime) < DEBOUNCE_MS) return
         lastProcessedText = fullText
         lastProcessedTime = now
 
-        // 4. Parsear
+        // Parsear — el parser filtra por contenido ("viaje", "aceptar", "km")
         val rawData = uberParser.parse(fullText) ?: return
 
+        Log.d("GigScanner", "🎉 ¡OFERTA DETECTADA! fare=${rawData.fare}, dist=${rawData.distanceKm}, dur=${rawData.durationMin}")
         Timber.d("Uber offer parsed: fare=${rawData.fare}, dist=${rawData.distanceKm}, dur=${rawData.durationMin}")
 
         serviceScope.launch {
             processTrip(rawData)
         }
+    }
+
+    private fun windowTypeName(type: Int): String = when (type) {
+        AccessibilityWindowInfo.TYPE_APPLICATION -> "APP"
+        AccessibilityWindowInfo.TYPE_SYSTEM -> "SYSTEM"
+        AccessibilityWindowInfo.TYPE_INPUT_METHOD -> "INPUT"
+        AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY -> "OVERLAY"
+        else -> "TYPE_$type"
     }
 
     private suspend fun processTrip(rawData: TripOfferRawData) {

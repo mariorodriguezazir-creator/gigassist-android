@@ -53,30 +53,64 @@ class DiDiNotificationListener : NotificationListenerService() {
         private const val DIDI_PACKAGE = "com.didiglobal.driver"
     }
 
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        Log.d("DiDiNotif", "✅ NotificationListener CONECTADO — escuchando notificaciones")
+        // Log todas las notificaciones actuales para confirmar que funciona
+        try {
+            val active = activeNotifications
+            Log.d("DiDiNotif", "Notificaciones activas: ${active?.size ?: 0}")
+            active?.forEach { sbn ->
+                Log.d("DiDiNotif", "  → ${sbn.packageName}: ${sbn.notification.extras?.getString(Notification.EXTRA_TITLE)}")
+            }
+        } catch (e: Exception) {
+            Log.e("DiDiNotif", "Error leyendo notificaciones activas", e)
+        }
+    }
+
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        Log.d("DiDiNotif", "❌ NotificationListener DESCONECTADO")
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val notification = sbn ?: return
+
+        // Log TODAS las notificaciones para debug (solo el packageName)
+        Log.d("DiDiNotif", "Notif recibida: pkg=${notification.packageName}")
+
         if (notification.packageName != DIDI_PACKAGE) return
 
         val extras = notification.notification.extras ?: return
         val title   = extras.getString(Notification.EXTRA_TITLE) ?: ""
         val text    = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString() ?: ""
+        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString() ?: ""
+        val infoText = extras.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString() ?: ""
 
-        val full = listOf(title, text, bigText)
+        val full = listOf(title, text, bigText, subText, infoText)
             .filter { it.isNotBlank() }
             .joinToString(" ")
 
-        Log.d("DiDiNotif", "RAW notif: $full")
+        Log.d("DiDiNotif", "=== DiDi NOTIF ===")
+        Log.d("DiDiNotif", "  title:   $title")
+        Log.d("DiDiNotif", "  text:    $text")
+        Log.d("DiDiNotif", "  bigText: $bigText")
+        Log.d("DiDiNotif", "  subText: $subText")
+        Log.d("DiDiNotif", "  FULL:    $full")
 
         if (full.isBlank()) return
 
-        val offer = didiParser.parse(full) ?: return
+        val offer = didiParser.parse(full)
+        if (offer != null) {
+            Log.d("DiDiNotif", "✅ DiDi OFERTA: fare=${offer.fare}, dist=${offer.distanceKm}, dur=${offer.durationMin}")
+            Timber.d("DiDi offer from notification: fare=${offer.fare}, dist=${offer.distanceKm}, dur=${offer.durationMin}")
 
-        Log.d("GigParser", "✅ DiDi OFERTA: fare=${offer.fare}, dist=${offer.distanceKm}, dur=${offer.durationMin}")
-        Timber.d("DiDi offer from notification: fare=${offer.fare}, dist=${offer.distanceKm}, dur=${offer.durationMin}")
-
-        serviceScope.launch {
-            processTrip(offer)
+            serviceScope.launch {
+                processTrip(offer)
+            }
+        } else {
+            Log.d("DiDiNotif", "ℹ️ Parser no encontró oferta en esta notificación")
         }
     }
 
