@@ -1,7 +1,11 @@
 package com.gigassist.presentation.onboarding
 
+import android.app.Activity
 import android.content.Intent
+import android.media.projection.MediaProjectionManager
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,8 +46,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.gigassist.core.capture.ScreenCaptureService
 import com.gigassist.domain.model.CountryCode
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -55,6 +61,21 @@ fun OnboardingScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    var captureActive by remember { mutableStateOf(false) }
+
+    // Launcher para MediaProjection
+    val projectionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val svc = Intent(context, ScreenCaptureService::class.java).apply {
+                putExtra("proj_data", result.data)
+                putExtra("proj_code", result.resultCode)
+            }
+            ContextCompat.startForegroundService(context, svc)
+            captureActive = true
+        }
+    }
 
     LaunchedEffect(state.isSaved) {
         if (state.isSaved) {
@@ -181,19 +202,24 @@ fun OnboardingScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                // Uber — Accesibilidad
+                // 1. Captura de pantalla (MediaProjection + OCR)
                 OutlinedButton(
                     onClick = {
-                        context.startActivity(
-                            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                        )
+                        val mgr = context.getSystemService(
+                            Activity.MEDIA_PROJECTION_SERVICE
+                        ) as MediaProjectionManager
+                        projectionLauncher.launch(mgr.createScreenCaptureIntent())
                     },
-                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    enabled = !captureActive
                 ) {
-                    Text("🚗 Activar Accesibilidad (Uber)")
+                    Text(
+                        if (captureActive) "✅ Captura de pantalla activa"
+                        else "📸 Activar captura de pantalla (Uber + DiDi)"
+                    )
                 }
 
-                // Uber + DiDi — Notificaciones (mecanismo principal)
+                // 2. Notificaciones (complemento)
                 OutlinedButton(
                     onClick = {
                         context.startActivity(
@@ -202,7 +228,7 @@ fun OnboardingScreen(
                     },
                     modifier = Modifier.fillMaxWidth().height(48.dp)
                 ) {
-                    Text("🔔 Activar Notificaciones (Uber + DiDi)")
+                    Text("🔔 Activar Notificaciones (complemento)")
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))

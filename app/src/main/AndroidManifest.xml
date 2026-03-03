@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Permiso para servicio en primer plano -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Permiso para captura de pantalla -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <application
         android:name=".GigAssistApp"
@@ -27,21 +29,13 @@
             </intent-filter>
         </activity>
 
-        <!-- AccessibilityService SOLO para Uber Driver -->
+        <!-- ScreenCaptureService — MediaProjection + ML Kit OCR -->
         <service
-            android:name=".core.accessibility.TripScannerService"
-            android:exported="false"
-            android:label="@string/app_name"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService"/>
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config"/>
-        </service>
+            android:name=".core.capture.ScreenCaptureService"
+            android:foregroundServiceType="mediaProjection"
+            android:exported="false" />
 
-        <!-- NotificationListenerService para Uber + DiDi -->
+        <!-- NotificationListenerService para Uber + DiDi (complemento) -->
         <service
             android:name=".core.notification.TripNotificationListener"
             android:exported="true"

@@ -80,6 +80,9 @@ dependencies {
     // Timber
     implementation(libs.timber)
 
+    // ML Kit OCR — on-device, gratis, sin internet
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+
     // Unit Testing
     testImplementation(libs.junit)
     testImplementation(libs.mockk)
