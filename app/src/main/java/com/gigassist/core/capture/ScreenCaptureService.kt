@@ -85,6 +85,8 @@ class ScreenCaptureService : Service() {
     )
     private var lastText = ""
     private var lastProcessedTime = 0L
+    private var lastProcessedTrip: com.gigassist.domain.model.TripOfferRawData? = null
+    private var lastTripProcessedTime = 0L
     private var isCapturing = false
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -262,6 +264,21 @@ class ScreenCaptureService : Service() {
     }
 
     private suspend fun processTrip(rawData: TripOfferRawData, platform: String) {
+        val now = System.currentTimeMillis()
+        if (lastProcessedTrip != null &&
+            lastProcessedTrip?.fare == rawData.fare &&
+            lastProcessedTrip?.distanceKm == rawData.distanceKm &&
+            lastProcessedTrip?.durationMin == rawData.durationMin &&
+            now - lastTripProcessedTime < 45000L
+        ) {
+            // Ignorar duplicados leídos en múltiples cuadros
+            Timber.d("Ignorando viaje duplicado ($platform): fare=${rawData.fare}")
+            return
+        }
+
+        lastProcessedTrip = rawData
+        lastTripProcessedTime = now
+
         try {
             val settings = settingsRepository.getSettings() ?: DriverSettings()
 
