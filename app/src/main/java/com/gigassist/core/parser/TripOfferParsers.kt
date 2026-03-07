@@ -38,14 +38,14 @@ class UberTripOfferParser @Inject constructor() : TripOfferParser {
             ?.replace(",", ".")?.toDoubleOrNull()
 
         // Distancia del viaje (la que tiene "Viaje" delante)
-        val distRegex = Regex("""[Vv]iaje[^\\d]*?(\d+(?:[.,]\d)?)\\s*km""", RegexOption.IGNORE_CASE)
+        val distRegex = Regex("""[Vv]iaje[^\d]*?(\d+(?:[.,]\d+)?)\s*km""", RegexOption.IGNORE_CASE)
         val dist = distRegex.find(fullText)?.groupValues?.get(1)
             ?.replace(",", ".")?.toDoubleOrNull()
             // Fallback: buscar el patrón "N min (N.N km)" más grande
             ?: findTripDistance(fullText)
 
         // Duración del viaje
-        val durRegex = Regex("""[Vv]iaje[^\\d]*?(\d+)\s*min""", RegexOption.IGNORE_CASE)
+        val durRegex = Regex("""[Vv]iaje[^\d]*?(\d+)\s*min""", RegexOption.IGNORE_CASE)
         val dur = durRegex.find(fullText)?.groupValues?.get(1)?.toIntOrNull()
             // Fallback: buscar el segundo "N min" (el primero es recogida)
             ?: findTripDuration(fullText)
