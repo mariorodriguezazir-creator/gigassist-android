@@ -123,24 +123,23 @@ class DiDiTripOfferParser @Inject constructor() : TripOfferParser {
 
         Log.d(TAG, "🔍 Parsing DiDi: ${fullText.take(200)}")
 
-        // Tarifa: primer "$" seguido de número
+        // Tarifa principal de DiDi siempre será el monto más alto en pantalla (ej: $142.80 > $37.21)
         val fareRegex = Regex("""\$\s*(\d+(?:[.,]\d{1,2})?)""")
-        val fare = fareRegex.find(fullText)?.groupValues?.get(1)
-            ?.replace(",", ".")?.toDoubleOrNull()
+        val fare = fareRegex.findAll(fullText)
+            .mapNotNull { it.groupValues[1].replace(",", ".").toDoubleOrNull() }
+            .maxOrNull()
 
-        // Distancia: formato "Xmin (Y.Ykm)" sin espacios. Tomar la SEGUNDA ocurrencia.
+        // Distancia: formato "Xmin (Y.Ykm)". Tomar el máximo asegura obtener la del viaje (y no recogida) aun si el OCR salta el orden.
         val distRegex = Regex("""\d+min\s*\((\d+(?:[.,]\d+)?)\s*km\)""", RegexOption.IGNORE_CASE)
-        val distMatches = distRegex.findAll(fullText).toList()
-        val distStr = if (distMatches.size >= 2) distMatches[1].groupValues[1]
-                      else distMatches.firstOrNull()?.groupValues?.get(1)
-        val dist = distStr?.replace(",", ".")?.toDoubleOrNull()
+        val dist = distRegex.findAll(fullText)
+            .mapNotNull { it.groupValues[1].replace(",", ".").toDoubleOrNull() }
+            .maxOrNull()
 
-        // Duración: segunda ocurrencia de "Xmin"
+        // Duración: el mayor tiempo en minutos
         val durRegex = Regex("""(\d+)min""", RegexOption.IGNORE_CASE)
-        val durMatches = durRegex.findAll(fullText).toList()
-        val durStr = if (durMatches.size >= 2) durMatches[1].groupValues[1]
-                     else durMatches.firstOrNull()?.groupValues?.get(1)
-        val dur = durStr?.toIntOrNull()
+        val dur = durRegex.findAll(fullText)
+            .mapNotNull { it.groupValues[1].toIntOrNull() }
+            .maxOrNull()
 
         Log.d(TAG, "fare=$fare | dist=$dist | dur=$dur")
 

@@ -19,7 +19,7 @@ class TripBubbleOverlay(private val context: Context) {
 
     fun showBubble(fare: String, ratePerHour: String, evaluation: EvaluationResult) {
         handler.post {
-            removeBubble() // Remover existente si hay alguno
+            removeBubbleSync() // Remover existente si hay alguno
 
             val layout = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -89,12 +89,16 @@ class TripBubbleOverlay(private val context: Context) {
 
     fun removeBubble() {
         handler.post {
-            overlayView?.let {
-                if (it.isAttachedToWindow) {
-                    windowManager.removeView(it)
-                }
-                overlayView = null
+            removeBubbleSync()
+        }
+    }
+    
+    private fun removeBubbleSync() {
+        overlayView?.let {
+            if (it.isAttachedToWindow) {
+                windowManager.removeView(it)
             }
+            overlayView = null
         }
     }
 }

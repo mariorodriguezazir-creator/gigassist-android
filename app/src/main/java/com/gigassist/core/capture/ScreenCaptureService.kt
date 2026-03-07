@@ -284,11 +284,12 @@ class ScreenCaptureService : Service() {
 
     private suspend fun processTrip(rawData: TripOfferRawData, platform: String) {
         val now = System.currentTimeMillis()
+        
+        // Si tiene la misma tarifa exacta en un lapso de 25 segundos, asumimos que es el mismo viaje
+        // fluctuando por el OCR. Ignoramos validación de km y minutos si el fare coincide perfecto.
         if (lastProcessedTrip != null &&
             lastProcessedTrip?.fare == rawData.fare &&
-            kotlin.math.abs(lastProcessedTrip!!.distanceKm - rawData.distanceKm) < 3.0 &&
-            kotlin.math.abs(lastProcessedTrip!!.durationMin - rawData.durationMin) < 5 &&
-            now - lastTripProcessedTime < 45000L
+            now - lastTripProcessedTime < 25000L
         ) {
             // Ignorar duplicados leídos en múltiples cuadros
             Timber.d("Ignorando viaje duplicado ($platform): fare=${rawData.fare}")
