@@ -76,6 +76,8 @@ class ScreenCaptureService : Service() {
     private lateinit var tripRepository: TripRepository
     private lateinit var shiftRepository: ShiftRepository
 
+    private var tripBubbleOverlay: TripBubbleOverlay? = null
+
     private var mediaProjection: MediaProjection? = null
     private var imageReader: ImageReader? = null
     private var virtualDisplay: VirtualDisplay? = null
@@ -117,6 +119,11 @@ class ScreenCaptureService : Service() {
             settingsRepository = entryPoint.settingsRepository()
             tripRepository = entryPoint.tripRepository()
             shiftRepository = entryPoint.shiftRepository()
+            
+            if (android.provider.Settings.canDrawOverlays(this)) {
+                tripBubbleOverlay = TripBubbleOverlay(this)
+            }
+            
             Log.d(TAG, "✅ Dependencias inyectadas")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error inyectando dependencias", e)
@@ -307,6 +314,17 @@ class ScreenCaptureService : Service() {
 
             // Mostrar notificación al usuario
             val symbol = settings.countryCode.currencySymbol
+            
+            val formattedFare = "$symbol${String.format("%.0f", rawData.fare)}"
+            val formattedRatePerHour = "$symbol${String.format("%.0f", rates.ratePerHour)}"
+            
+            // Mostrar Overlay (Si se tiene el permiso)
+            tripBubbleOverlay?.showBubble(
+                fare = formattedFare,
+                ratePerHour = formattedRatePerHour,
+                evaluation = rates.evaluationResult
+            )
+
             val evalLabel = when (rates.evaluationResult) {
                 com.gigassist.domain.model.EvaluationResult.GOOD -> "✅ BUENO"
                 com.gigassist.domain.model.EvaluationResult.FAIR -> "⚠️ REGULAR"
@@ -314,13 +332,14 @@ class ScreenCaptureService : Service() {
             }
             showTripNotification(
                 platform = platform,
-                fare = "$symbol${String.format("%.0f", rawData.fare)}",
+                fare = formattedFare,
                 distance = "${rawData.distanceKm} km",
                 duration = "${rawData.durationMin} min",
-                ratePerHour = "$symbol${String.format("%.0f", rates.ratePerHour)}/h",
+                ratePerHour = formattedRatePerHour,
                 evaluation = evalLabel
             )
-
+            
+            // Emitir evento por Flow para la UI (Mantiene el behavior antiguo por si se ocupa)
             val uiModel = TripEvaluationUiModel(
                 fare = rawData.fare,
                 ratePerHour = rates.ratePerHour,

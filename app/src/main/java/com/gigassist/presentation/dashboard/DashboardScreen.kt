@@ -229,6 +229,24 @@ private fun CaptureCard(
             ) {
                 Text("🔔 Notificaciones (complemento)", style = MaterialTheme.typography.bodySmall)
             }
+            
+            val context = LocalContext.current
+            if (!android.provider.Settings.canDrawOverlays(context)) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        val intent = Intent(
+                            android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            android.net.Uri.parse("package:${context.packageName}")
+                        )
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.fillMaxWidth().height(40.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
+                ) {
+                    Text("🔴 Faltan permisos de Ventana Flotante", style = MaterialTheme.typography.bodySmall, color = Color.White)
+                }
+            }
         }
     }
 }
