@@ -82,13 +82,14 @@ class ScreenCaptureService : Service() {
     private var imageReader: ImageReader? = null
     private var virtualDisplay: VirtualDisplay? = null
     private val handler = Handler(Looper.getMainLooper())
-    private val textRecognizer = TextRecognition.getClient(
+    private var textRecognizer = TextRecognition.getClient(
         TextRecognizerOptions.DEFAULT_OPTIONS
     )
     private var lastText = ""
     private var lastProcessedTime = 0L
     private var lastProcessedTrip: com.gigassist.domain.model.TripOfferRawData? = null
     private var lastTripProcessedTime = 0L
+    private var lastOfferSeenTime = 0L
     private var isCapturing = false
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -238,9 +239,12 @@ class ScreenCaptureService : Service() {
     }
 
     private fun processText(text: String) {
+        val now = System.currentTimeMillis()
+        
         // Intentar primero con el parser de Uber
         val uberOffer = uberParser.parse(text)
         if (uberOffer != null) {
+            lastOfferSeenTime = now
             Log.d(TAG, "🎉 UBER OFERTA VÍA OCR: fare=${uberOffer.fare}, dist=${uberOffer.distanceKm}, dur=${uberOffer.durationMin}")
             serviceScope.launch { processTrip(uberOffer, "Uber") }
             return
@@ -249,9 +253,17 @@ class ScreenCaptureService : Service() {
         // Intentar con el parser de DiDi
         val didiOffer = didiParser.parse(text)
         if (didiOffer != null) {
+            lastOfferSeenTime = now
             Log.d(TAG, "🎉 DIDI OFERTA VÍA OCR: fare=${didiOffer.fare}, dist=${didiOffer.distanceKm}, dur=${didiOffer.durationMin}")
             serviceScope.launch { processTrip(didiOffer, "DiDi") }
             return
+        }
+        
+        // Si no detectó ninguna oferta, verificamos hace cuánto fue la última vez que vimos una
+        if (lastOfferSeenTime > 0 && (now - lastOfferSeenTime) > 3000L) {
+            // Pasaron más de 3 segundos sin ver la oferta en pantalla, ocultamos el Bubble
+            tripBubbleOverlay?.removeBubble()
+            lastOfferSeenTime = 0L // Reseteamos para evitar llamadas múltiples
         }
     }
 
@@ -274,8 +286,8 @@ class ScreenCaptureService : Service() {
         val now = System.currentTimeMillis()
         if (lastProcessedTrip != null &&
             lastProcessedTrip?.fare == rawData.fare &&
-            lastProcessedTrip?.distanceKm == rawData.distanceKm &&
-            lastProcessedTrip?.durationMin == rawData.durationMin &&
+            kotlin.math.abs(lastProcessedTrip!!.distanceKm - rawData.distanceKm) < 3.0 &&
+            kotlin.math.abs(lastProcessedTrip!!.durationMin - rawData.durationMin) < 5 &&
             now - lastTripProcessedTime < 45000L
         ) {
             // Ignorar duplicados leídos en múltiples cuadros
